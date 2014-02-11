@@ -777,13 +777,18 @@ public class BrowserMobHttpClient {
             entry.getRequest().getCookies().add(hc);
         }
 
-        String contentType = null;
+        String contentTypeString = null;
 
         if (response != null) {
             Header contentTypeHdr = response.getFirstHeader("Content-Type");
             if (contentTypeHdr != null) {
-                contentType = contentTypeHdr.getValue();
-                entry.getResponse().getContent().setMimeType(contentType);
+                ContentType contentType = ContentType.parse(contentTypeHdr.getValue());
+                HarContent content = entry.getResponse().getContent();
+                // HAR "content" object's "mimeType" property can contain charset if available.
+                content.setMimeType(contentType.toString());
+
+                contentTypeString = contentType.toString();
+                charSet = contentType.getCharset() != null ? contentType.getCharset().toString() : "";
 
                 if (captureContent && os != null && os instanceof ClonedOutputStream) {
                     ByteArrayOutputStream copy = ((ClonedOutputStream) os).getOutput();
@@ -799,24 +804,14 @@ public class BrowserMobHttpClient {
                         }
                     }
 
-                    if (hasTextualContent(contentType)) {
-                        setTextOfEntry(entry, copy, contentType);
+                    byte[] dataBytes = copy.toByteArray();
+                    if (hasTextualContent(contentType.getMimeType())) {
+                        setTextContent(content, dataBytes, contentType);
                     } else if(captureBinaryContent){
-                        setBinaryContentOfEntry(entry, copy);
+                        setBinaryContent(content, dataBytes);
                     }
                 }
-
-
-                NameValuePair nvp = contentTypeHdr.getElements()[0].getParameterByName("charset");
-
-                if (nvp != null) {
-                    charSet = nvp.getValue();
-                }
             }
-        }
-
-        if (contentType != null) {
-            entry.getResponse().getContent().setMimeType(contentType);
         }
 
         // checking to see if the client is being redirected
@@ -884,7 +879,7 @@ public class BrowserMobHttpClient {
         }
 
 
-        return new BrowserMobHttpResponse(entry, method, response, errorMessage, contentType, charSet);
+        return new BrowserMobHttpResponse(entry, method, response, errorMessage, contentTypeString, charSet);
     }
 
     /**
@@ -918,7 +913,7 @@ public class BrowserMobHttpClient {
         }
         for (Pattern pattern : CHARSET_PATTERNS) {
             Matcher matcher = pattern.matcher(contentHead);
-            if (!matcher.matches()) {
+            if (!matcher.find()) {
                 continue;
             }
             MatchResult result = matcher.toMatchResult();
@@ -927,10 +922,7 @@ public class BrowserMobHttpClient {
                 continue;
             }
             try {
-                ContentType guessedType = ContentType.parse(result.group(1));
-                if (guessedType.getCharset() != null) {
-                    return guessedType.getCharset();
-                }
+                return Charset.forName(result.group(1));
             } catch (Exception e) {
                 continue;
             }
@@ -950,17 +942,17 @@ public class BrowserMobHttpClient {
             mimeType.startsWith("application/xhtml+xml");
     }
 
-    private void setBinaryContentOfEntry(HarEntry entry, ByteArrayOutputStream copy) {
-        entry.getResponse().getContent().setText(Base64.byteArrayToBase64(copy.toByteArray()));
+    private void setBinaryContent(HarContent content, byte[] dataBytes) {
+        content.setText(Base64.byteArrayToBase64(dataBytes));
+        content.setEncoding("base64");
     }
 
-    private void setTextOfEntry(HarEntry entry, ByteArrayOutputStream copy, String contentType) {
-        ContentType contentTypeCharset = ContentType.parse(contentType);
-        Charset charset = contentTypeCharset.getCharset();
+    private void setTextContent(HarContent content, byte[] dataBytes, ContentType contentType) {
+        Charset charset = guessContentCharset(contentType, dataBytes);
         if (charset != null) {
-            entry.getResponse().getContent().setText(new String(copy.toByteArray(), charset));
+            content.setText(new String(dataBytes, charset));
         } else {
-            entry.getResponse().getContent().setText(new String(copy.toByteArray()));
+            setBinaryContent(content, dataBytes);
         }
     }
 
