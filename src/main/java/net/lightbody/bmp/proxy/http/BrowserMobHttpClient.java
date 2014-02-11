@@ -42,6 +42,7 @@ import org.java_bandwidthlimiter.StreamManager;
 import org.xbill.DNS.Cache;
 import org.xbill.DNS.DClass;
 
+import javax.annotation.Nullable;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -51,6 +52,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -68,6 +70,20 @@ public class BrowserMobHttpClient {
     private boolean captureContent;
     // if captureContent is set, default policy is to capture binary contents too
     private boolean captureBinaryContent = true;
+
+    // Charset patterns used to guess the charset, in case there is no charset in Content-Type.
+    // Start from more common patterns as it would reduce the required time to guess.
+    private static final Pattern[] CHARSET_PATTERNS = {
+        // HTML5 <meta> charset specification.
+        Pattern.compile("<meta\\s+[^>]*charset=['\"]([^'\"]*)['\"]"),
+        // HTML4 <meta> http-equiv specification for Content-Type.
+        Pattern.compile("<meta\\s+[^>]*http-equiv=['\"][Cc]ontent-[Tt]ype['\"]\\s+[^>]*" +
+            "content=['\"]([^'\"]*)['\"]"),
+        // CSS @charset at-rule.
+        Pattern.compile("@charset\\s+['\"]([^'\"]*)['\"];"),
+        // XML declaration.
+        Pattern.compile("<\\?xml\\s+[^>]*encoding=['\"]([^'\"]*)['\"]"),
+    };
 
     private SimulatedSocketFactory socketFactory;
     private TrustingSSLSocketFactory sslSocketFactory;
@@ -700,12 +716,27 @@ public class BrowserMobHttpClient {
                 HttpEntity entity = enclosingReq.getEntity();
 
                 HarPostData data = new HarPostData();
-                data.setMimeType(req.getMethod().getFirstHeader("Content-Type").getValue());
+                Header contentTypeHdr = req.getMethod().getFirstHeader("Content-Type");
+                ContentType contentType;
+                if (contentTypeHdr != null) {
+                    contentType = ContentType.parse(contentTypeHdr.getValue());
+                } else {
+                    contentType = ContentType.DEFAULT_TEXT;
+                }
+                data.setMimeType(contentType.toString());
                 entry.getRequest().setPostData(data);
+
+                byte[] dataBytes = req.getCopy().toByteArray();
+                Charset charset = guessContentCharset(contentType, dataBytes);
 
                 if (urlEncoded || URLEncodedUtils.isEncoded(entity)) {
                     try {
-                        final String content = new String(req.getCopy().toByteArray(), "UTF-8");
+                        // Use UTF-8 if no encoding was specified, assuming non-ASCII characters
+                        // are appropriately escaped.
+                        if (charset == null) {
+                            charset = Charset.forName("UTF-8");
+                        }
+                        final String content = new String(dataBytes, charset);
                         if (content != null && content.length() > 0) {
                             List<NameValuePair> result = new ArrayList<NameValuePair>();
                             URLEncodedUtils.parse(result, new Scanner(content), null);
@@ -722,7 +753,17 @@ public class BrowserMobHttpClient {
                     }
                 } else {
                     // not URL encoded, so let's grab the body of the POST and capture that
-                    data.setText(new String(req.getCopy().toByteArray()));
+                    if (charset != null) {
+                        data.setText(new String(dataBytes, charset));
+                    } else {
+                        // It's dangerous to assume the encoding here because an application and
+                        // its server might have an unspoken agreement on the encoding they use,
+                        // which is not necessarily UTF-8.
+                        // Encode in BASE64 and leave a comment ("postData" object doesn't have
+                        // "encoding" field unlike "content" object in HAR 1.2).
+                        data.setText(Base64.byteArrayToBase64(dataBytes));
+                        data.setComment("base64");
+                    }
                 }
             }
         }
@@ -846,13 +887,67 @@ public class BrowserMobHttpClient {
         return new BrowserMobHttpResponse(entry, method, response, errorMessage, contentType, charSet);
     }
 
-    private boolean hasTextualContent(String contentType) {
-        return contentType != null && contentType.startsWith("text/") ||
-            contentType.startsWith("application/x-javascript") ||
-            contentType.startsWith("application/javascript") ||
-            contentType.startsWith("application/json") ||
-            contentType.startsWith("application/xml") ||
-            contentType.startsWith("application/xhtml+xml");
+    /**
+     * Guess the charset of content, either from the given contentType or the content itself.
+     *
+     * This method first tries to extract charset from the given contentType. If no information
+     * available, then it tries to find a charset specification in the content itself.
+     * There is no guarantee that this method can guess the charset; in the latter case some pattern
+     * matching heuristic is applied only for common file types, e.g., HTML, CSS or XML.
+     *
+     * @param contentType Known HTTP ContentType attached to the content.
+     * @param content Content body.
+     * @return Guessed charset (encoding) of the content.
+     */
+    @Nullable
+    private Charset guessContentCharset(ContentType contentType, byte[] content) {
+        if (contentType.getCharset() != null) {
+            return contentType.getCharset();
+        } else if (!hasTextualContent(contentType.getMimeType())) {
+            return null;
+        }
+        // Convert the first 512 byte assuming it's US-ASCII, and find some unique charset specs.
+        // Might not work well with some sources because the content is not rigorously parsed.
+        // Should be replaced if there is an existing handy library for this.
+        String contentHead;
+        try {
+            contentHead = new String(content, 0, Math.min(content.length, 512), "US-ASCII");
+        } catch (UnsupportedEncodingException e) {
+            LOG.warn("US-ASCII encoding is not supported by JVM.");
+            return null;
+        }
+        for (Pattern pattern : CHARSET_PATTERNS) {
+            Matcher matcher = pattern.matcher(contentHead);
+            if (!matcher.matches()) {
+                continue;
+            }
+            MatchResult result = matcher.toMatchResult();
+            if (result.groupCount() != 1) {
+                LOG.warn("Charset pattern broken: " + pattern.toString());
+                continue;
+            }
+            try {
+                ContentType guessedType = ContentType.parse(result.group(1));
+                if (guessedType.getCharset() != null) {
+                    return guessedType.getCharset();
+                }
+            } catch (Exception e) {
+                continue;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasTextualContent(@Nullable String mimeType) {
+        if (mimeType == null) {
+            return false;
+        }
+        return mimeType.startsWith("text/") ||
+            mimeType.startsWith("application/x-javascript") ||
+            mimeType.startsWith("application/javascript") ||
+            mimeType.startsWith("application/json") ||
+            mimeType.startsWith("application/xml") ||
+            mimeType.startsWith("application/xhtml+xml");
     }
 
     private void setBinaryContentOfEntry(HarEntry entry, ByteArrayOutputStream copy) {
