@@ -140,14 +140,14 @@ public class BrowserMobHttpClient {
                 return new HttpRequestExecutor() {
                     @Override
                     protected HttpResponse doSendRequest(HttpRequest request, HttpClientConnection conn, HttpContext context) throws IOException, HttpException {
-						long requestHeadersSize = request.getRequestLine().toString().length() + 4;
-						long requestBodySize = 0;
-						for (Header header : request.getAllHeaders()) {
-							requestHeadersSize += header.toString().length() + 2;
-							if (header.getName().equals("Content-Length")) {
-								requestBodySize += Integer.valueOf(header.getValue());
-							}
-						}
+                        long requestHeadersSize = request.getRequestLine().toString().length() + 4;
+                        long requestBodySize = 0;
+                        for (Header header : request.getAllHeaders()) {
+                            requestHeadersSize += header.toString().length() + 2;
+                            if (header.getName().equals("Content-Length")) {
+                                requestBodySize += Integer.valueOf(header.getValue());
+                            }
+                        }
 
                         HarEntry entry = RequestInfo.get().getEntry();
                         if (entry != null) {
@@ -165,15 +165,15 @@ public class BrowserMobHttpClient {
                     protected HttpResponse doReceiveResponse(HttpRequest request, HttpClientConnection conn, HttpContext context) throws HttpException, IOException {
                         Date start = new Date();
                         HttpResponse response = super.doReceiveResponse(request, conn, context);
-						long responseHeadersSize = response.getStatusLine().toString().length() + 4;
-						for (Header header : response.getAllHeaders()) {
-							responseHeadersSize += header.toString().length() + 2;
-						}
+                        long responseHeadersSize = response.getStatusLine().toString().length() + 4;
+                        for (Header header : response.getAllHeaders()) {
+                            responseHeadersSize += header.toString().length() + 2;
+                        }
 
                         HarEntry entry = RequestInfo.get().getEntry();
                         if (entry != null) {
-							entry.getResponse().setHeadersSize(responseHeadersSize);
-						}
+                            entry.getResponse().setHeadersSize(responseHeadersSize);
+                        }
 
                         RequestInfo.get().wait(start, new Date());
                         return response;
@@ -436,7 +436,7 @@ public class BrowserMobHttpClient {
                     String version = uai.getVersionNumber().toVersionString();
                     har.getLog().setBrowser(new HarNameVersion(browser, version));
                 } catch (Exception e) {
-                	LOG.warn("Failed to parse user agent string", e);
+                    LOG.warn("Failed to parse user agent string", e);
                 }
             }
         }
@@ -522,15 +522,15 @@ public class BrowserMobHttpClient {
             har.getLog().addEntry(entry);
         }
 
-    	String query = method.getURI().getRawQuery();
-    	if (query != null) {
-	        MultiMap<String> params = new MultiMap<String>();
-	        UrlEncoded.decodeTo(query, params, "UTF-8");
-	        for (String k : params.keySet()) {
-	        	for (Object v : params.getValues(k)) {
-	        		entry.getRequest().getQueryString().add(new HarNameValuePair(k, (String) v));
-	        	}
-	        }
+        String query = method.getURI().getRawQuery();
+        if (query != null) {
+            MultiMap<String> params = new MultiMap<String>();
+            UrlEncoded.decodeTo(query, params, "UTF-8");
+            for (String k : params.keySet()) {
+                for (Object v : params.getValues(k)) {
+                    entry.getRequest().getQueryString().add(new HarNameValuePair(k, (String) v));
+                }
+            }
         }
 
         String errorMessage = null;
@@ -586,17 +586,17 @@ public class BrowserMobHttpClient {
                 ProtocolVersion version = null;
                 int reqDotVersion = req.getProxyRequest().getDotVersion();
                 if (reqDotVersion == -1) {
-                	version = new HttpVersion(0, 9);
+                    version = new HttpVersion(0, 9);
                 } else if (reqDotVersion == 0) {
-                	version = new HttpVersion(1, 0);
+                    version = new HttpVersion(1, 0);
                 } else if (reqDotVersion == 1) {
-                   	version = new HttpVersion(1, 1);
+                       version = new HttpVersion(1, 1);
                 }
                 // and if not any of these, trust that a Null version will
                 // cause an appropriate error
-				callback.handleStatusLine(new BasicStatusLine(version, statusCode, "Status set by browsermob-proxy"));
-				// No mechanism to look up the response text by status code,
-				// so include a notification that this is a synthetic error code.
+                callback.handleStatusLine(new BasicStatusLine(version, statusCode, "Status set by browsermob-proxy"));
+                // No mechanism to look up the response text by status code,
+                // so include a notification that this is a synthetic error code.
             } else {
                 response = httpClient.execute(method, ctx);
                 statusLine = response.getStatusLine();
@@ -846,30 +846,29 @@ public class BrowserMobHttpClient {
         return new BrowserMobHttpResponse(entry, method, response, errorMessage, contentType, charSet);
     }
 
-	private boolean hasTextualContent(String contentType) {
-		return contentType != null && contentType.startsWith("text/") ||
-				contentType.startsWith("application/x-javascript") ||
-				contentType.startsWith("application/javascript")  ||
-				contentType.startsWith("application/json")  ||
-				contentType.startsWith("application/xml")  ||
-				contentType.startsWith("application/xhtml+xml");
-	}
+    private boolean hasTextualContent(String contentType) {
+        return contentType != null && contentType.startsWith("text/") ||
+            contentType.startsWith("application/x-javascript") ||
+            contentType.startsWith("application/javascript") ||
+            contentType.startsWith("application/json") ||
+            contentType.startsWith("application/xml") ||
+            contentType.startsWith("application/xhtml+xml");
+    }
 
-	private void setBinaryContentOfEntry(HarEntry entry, ByteArrayOutputStream copy) {
-		entry.getResponse().getContent().setText(Base64.byteArrayToBase64(copy.toByteArray()));
-	}
+    private void setBinaryContentOfEntry(HarEntry entry, ByteArrayOutputStream copy) {
+        entry.getResponse().getContent().setText(Base64.byteArrayToBase64(copy.toByteArray()));
+    }
 
-	private void setTextOfEntry(HarEntry entry, ByteArrayOutputStream copy, String contentType) {
-		ContentType contentTypeCharset = ContentType.parse(contentType);
-		Charset charset = contentTypeCharset.getCharset();
-		if (charset != null) {
-			entry.getResponse().getContent().setText(new String(copy.toByteArray(), charset));
-		} else {
-			entry.getResponse().getContent().setText(new String(copy.toByteArray()));
-		}
-	}
+    private void setTextOfEntry(HarEntry entry, ByteArrayOutputStream copy, String contentType) {
+        ContentType contentTypeCharset = ContentType.parse(contentType);
+        Charset charset = contentTypeCharset.getCharset();
+        if (charset != null) {
+            entry.getResponse().getContent().setText(new String(copy.toByteArray(), charset));
+        } else {
+            entry.getResponse().getContent().setText(new String(copy.toByteArray()));
+        }
+    }
 
-    
     public void shutdown() {
         shutdown = true;
         abortActiveRequests();
@@ -939,7 +938,7 @@ public class BrowserMobHttpClient {
     }
 
     public void clearRewriteRules() {
-    	rewriteRules.clear();
+        rewriteRules.clear();
     }
 
     // this method is provided for backwards compatibility before we renamed it to
@@ -953,19 +952,19 @@ public class BrowserMobHttpClient {
     }
 
     public void clearBlacklist() {
-    	blacklistEntries.clear();
+        blacklistEntries.clear();
     }
 
     public synchronized void whitelistRequests(String[] patterns, int responseCode) {
-    	// synchronized to guard against concurrent modification
+        // synchronized to guard against concurrent modification
         whitelistEntry = new WhitelistEntry(patterns, responseCode);
     }
 
     public synchronized void clearWhitelist() {
-    	// synchronized to guard against concurrent modification
-    	whitelistEntry = null;
+        // synchronized to guard against concurrent modification
+        whitelistEntry = null;
     }
-    
+
     public void addHeader(String name, String value) {
         additionalHeaders.put(name, value);
     }
